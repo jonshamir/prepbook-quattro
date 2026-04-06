@@ -1,6 +1,6 @@
 {
   "family_name": "Prepbook Quattro",
-  "comment": "Advance widths MUST be one of the values in allowed_widths. iA Writer Quattro uses exactly 4 width classes (plus 0 for .notdef/NULL/CR). Run 'python scripts/inspect.py' on the source fonts to verify these.",
+  "comment": "Advance widths MUST be one of the values in allowed_widths. iA Writer Quattro uses four canonical width classes (300/450/600/900) plus a few outlier widths on precomposed accent glyphs. Run 'scripts/inspect_font.py' on the source fonts to verify.",
   "allowed_widths": [300, 450, 600, 900],
   "modifications": {
     "_comment": "Map glyph names to new advance widths. All values must be in allowed_widths above. Run scripts/inspect.py to see current widths and glyph names.",
@@ -27,5 +27,34 @@
     "bar": 450,
 
     "space": 300
+  },
+  "fraction_rebuild": {
+    "_comment": "Replace precomposed fraction glyphs with composites of <num>.numr + fraction + <den>.dnom at advance_width. reshape_fraction_slash rewrites the `fraction` glyph itself as a single continuous slash (preserving its 8-point/2-contour gvar structure so the weight axis still works). layout.auto=true computes per-target x-offsets from actual component ink bounds so each composite is centered; layout.gap adds horizontal space between numerator ink end and denominator ink start (larger = wider fractions).",
+    "enabled": true,
+    "advance_width": 900,
+    "reshape_fraction_slash": true,
+    "layout": {
+      "auto": true,
+      "gap": 200
+    },
+    "targets": {
+      "onehalf":       { "num": "one",   "den": "two"   },
+      "onequarter":    { "num": "one",   "den": "four"  },
+      "threequarters": { "num": "three", "den": "four"  },
+      "uni2150":       { "num": "one",   "den": "seven" },
+      "uni2151":       { "num": "one",   "den": "nine"  },
+      "uni2153":       { "num": "one",   "den": "three" },
+      "uni2154":       { "num": "two",   "den": "three" },
+      "uni2155":       { "num": "one",   "den": "five"  },
+      "uni2156":       { "num": "two",   "den": "five"  },
+      "uni2157":       { "num": "three", "den": "five"  },
+      "uni2158":       { "num": "four",  "den": "five"  },
+      "uni2159":       { "num": "one",   "den": "six"   },
+      "uni215A":       { "num": "five",  "den": "six"   },
+      "uni215B":       { "num": "one",   "den": "eight" },
+      "uni215C":       { "num": "three", "den": "eight" },
+      "uni215D":       { "num": "five",  "den": "eight" },
+      "uni215E":       { "num": "seven", "den": "eight" }
+    }
   }
 }

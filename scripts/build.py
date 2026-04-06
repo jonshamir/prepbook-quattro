@@ -8,8 +8,15 @@ Usage:
     python scripts/build.py
     python scripts/build.py --config custom-config.json
 """
-import sys, os, json, argparse, shutil
+import sys, os, json, argparse
+from array import array
 from fontTools.ttLib import TTFont
+from fontTools.ttLib.tables._g_l_y_f import Glyph, GlyphComponent, GlyphCoordinates
+from fontTools.ttLib.tables.ttProgram import Program
+
+# Composite glyph component flag bits
+ARGS_ARE_XY_VALUES = 0x0002
+ROUND_XY_TO_GRID   = 0x0004
 
 
 def load_config(path: str) -> dict:
@@ -98,6 +105,210 @@ def apply_modifications(font: TTFont, modifications: dict[str, int], allowed_wid
     return changed
 
 
+def rebuild_fractions(font: TTFont, cfg: dict) -> list[str]:
+    """Replace precomposed fraction glyphs with composites of numr+fraction+dnom.
+
+    Writes new composite records into the glyf table. No splines are drawn —
+    only existing component glyphs are referenced. Clears any gvar entries
+    for rebuilt glyphs so variation inherits from component deltas.
+    """
+    fr = cfg.get("fraction_rebuild") or {}
+    if not fr.get("enabled"):
+        return []
+    glyf = font["glyf"]
+    hmtx = font["hmtx"]
+    adv = fr["advance_width"]
+    lay = fr.get("layout") or {}
+    auto_layout = bool(lay.get("auto", True))
+    changed = []
+
+    # Force gvar to fully decompile BEFORE we touch any glyph shape.
+    # gvar decompiles lazily against the current glyf; if we modify glyf
+    # first, decompilation later asserts on point-count mismatch.
+    gvar = font.get("gvar")
+    if gvar is not None:
+        # LazyDict decompiles per-key on access; force eager decompile of
+        # every entry so later pops don't try to re-decompile against a
+        # glyph shape we've already rewritten.
+        for _k in list(gvar.variations.keys()):
+            _ = gvar.variations[_k]
+
+    # Optionally reshape the `fraction` glyph: iA Quattro's fraction is
+    # two disconnected 4-pt parallelograms (an upper-right bar and a
+    # lower-left bar, sharing one slope and stroke width). This deletes
+    # the upper bar and stretches the lower one along its own slope to
+    # span the full original yMin..yMax, producing a single continuous
+    # slash with the font's native fraction-slash angle.
+    if fr.get("reshape_fraction_slash"):
+        if "fraction" not in glyf:
+            raise ValueError("Font has no 'fraction' glyph to reshape")
+        original = glyf["fraction"]
+        if original.numberOfContours != 2:
+            print(
+                f"  WARNING: 'fraction' has {original.numberOfContours} contours "
+                f"(expected 2); skipping reshape"
+            )
+        else:
+            # Preserve the 8-point / 2-contour structure so the original
+            # gvar deltas still apply (→ slash varies with weight). We
+            # only *reposition* the 8 points: upper contour becomes the
+            # upper half of a continuous slash, lower contour becomes
+            # the lower half, meeting at mid-y with matching geometry.
+            coords = original.coordinates
+            ends = original.endPtsOfContours
+
+            # Contour 1 (lower bar) defines the slope + stroke width.
+            c1_start = ends[0] + 1
+            c1 = [(coords[j][0], coords[j][1]) for j in range(c1_start, ends[1] + 1)]
+            # Pt order (both contours in source): top-left, top-right,
+            # bottom-right, bottom-left.
+            top_l, top_r, bot_r, bot_l = c1
+            dy = top_l[1] - bot_l[1]
+            dx = top_l[0] - bot_l[0]
+            slope = (dx / dy) if dy else 0.0
+            stroke_w = top_r[0] - top_l[0]  # horizontal stroke thickness
+
+            # Anchor the full slash to pass through the lower contour's
+            # bottom-left (bot_l) at y=bot_l[1] with the same slope.
+            x0, y0 = bot_l
+            def edge_x(y):
+                return x0 + slope * (y - y0)
+
+            y_bot = original.yMin
+            y_top = original.yMax
+            y_mid = (y_bot + y_top) // 2
+
+            def pt(y, right=False):
+                x = edge_x(y) + (stroke_w if right else 0)
+                return (int(round(x)), int(y))
+
+            # Upper contour (pts 0..3): y=[y_mid, y_top]
+            new_c0 = [pt(y_top, right=False), pt(y_top, right=True),
+                      pt(y_mid, right=True),  pt(y_mid, right=False)]
+            # Lower contour (pts 4..7): y=[y_bot, y_mid]
+            new_c1 = [pt(y_mid, right=False), pt(y_mid, right=True),
+                      pt(y_bot, right=True),  pt(y_bot, right=False)]
+
+            pts = new_c0 + new_c1
+
+            # Center the ink within the glyph's existing advance width.
+            old_adv, _ = hmtx.metrics["fraction"]
+            xs = [p[0] for p in pts]
+            ink_center = (min(xs) + max(xs)) / 2
+            shift = int(round(old_adv / 2 - ink_center))
+            pts = [(x + shift, y) for (x, y) in pts]
+
+            new_frac = Glyph()
+            new_frac.numberOfContours = 2
+            new_frac.endPtsOfContours = [3, 7]
+            new_frac.coordinates = GlyphCoordinates(pts)
+            new_frac.flags = array("B", [1] * 8)  # all on-curve
+            new_frac.program = Program()
+            new_frac.program.fromBytecode(b"")
+
+            glyf["fraction"] = new_frac
+            new_frac.recalcBounds(glyf)
+            hmtx.metrics["fraction"] = (
+                old_adv,
+                new_frac.xMin if hasattr(new_frac, "xMin") else 0,
+            )
+            # IMPORTANT: do NOT pop gvar — keeping deltas at the same
+            # point indices preserves weight-axis variation. But we
+            # *do* need to weld the seam: pt2/pt5 and pt3/pt4 are
+            # coincident in base position, and if their original
+            # deltas differ they split apart at non-default axis
+            # values. Average their deltas so they move in lockstep.
+            if gvar is not None:
+                tvs = gvar.variations.get("fraction", [])
+                welded = 0
+                for tv in tvs:
+                    dlist = tv.coordinates
+                    for a, b in ((2, 5), (3, 4)):
+                        da, db = dlist[a], dlist[b]
+                        if da is None or db is None:
+                            continue
+                        avg = (
+                            int(round((da[0] + db[0]) / 2)),
+                            int(round((da[1] + db[1]) / 2)),
+                        )
+                        dlist[a] = avg
+                        dlist[b] = avg
+                    welded += 1
+                print(f"  welded fraction seam across {welded} gvar tuple(s)")
+            print(
+                f"  reshaped 'fraction' (8 pts, 2 contours preserved): "
+                f"y=[{y_bot},{y_top}] slope={slope:.3f}"
+            )
+
+    for target_name, spec in fr["targets"].items():
+        if target_name.startswith("_"):
+            continue
+        if target_name not in glyf:
+            print(f"  WARNING: fraction target '{target_name}' not in font, skipping")
+            continue
+
+        num_glyph = f'{spec["num"]}.numr'
+        den_glyph = f'{spec["den"]}.dnom'
+        for g in (num_glyph, "fraction", den_glyph):
+            if g not in glyf:
+                raise ValueError(
+                    f"Missing component glyph '{g}' required to rebuild '{target_name}'"
+                )
+
+        if auto_layout:
+            # Auto-compute offsets from actual component ink bounds so the
+            # composite is centered in `adv` and the slash lands at the
+            # boundary between numerator and denominator ink.
+            ng = glyf[num_glyph]; ng.recalcBounds(glyf)
+            dg = glyf[den_glyph]; dg.recalcBounds(glyf)
+            fg = glyf["fraction"]; fg.recalcBounds(glyf)
+            n_w = ng.xMax - ng.xMin
+            d_w = dg.xMax - dg.xMin
+            gap = int(lay.get("gap", 0))
+            total = n_w + gap + d_w
+            left_pad = (adv - total) // 2
+            num_x_off = left_pad - ng.xMin
+            den_x_off = (adv - left_pad - d_w) - dg.xMin
+            # Center fraction slash at the boundary where numerator ink
+            # ends and denominator ink begins.
+            boundary = left_pad + n_w + gap // 2
+            frac_x_off = boundary - (fg.xMin + fg.xMax) // 2
+        else:
+            num_x_off = int(lay.get("numerator_x", 0))
+            frac_x_off = int(lay.get("fraction_x", 150))
+            den_x_off = int(lay.get("denominator_x", 300))
+
+        components = []
+        for gname, x_off in (
+            (num_glyph, num_x_off),
+            ("fraction", frac_x_off),
+            (den_glyph, den_x_off),
+        ):
+            c = GlyphComponent()
+            c.glyphName = gname
+            c.x, c.y = int(x_off), 0
+            c.flags = ARGS_ARE_XY_VALUES | ROUND_XY_TO_GRID
+            components.append(c)
+
+        new_glyph = Glyph()
+        new_glyph.numberOfContours = -1  # composite marker
+        new_glyph.components = components
+        glyf[target_name] = new_glyph
+
+        # Recalculate bounds from components and set hmtx advance
+        new_glyph.recalcBounds(glyf)
+        new_lsb = new_glyph.xMin if hasattr(new_glyph, "xMin") else 0
+        hmtx.metrics[target_name] = (adv, new_lsb)
+        changed.append(target_name)
+
+        # Clear any existing gvar entries — composite inherits variation
+        # from the referenced numr/fraction/dnom components.
+        if "gvar" in font:
+            font["gvar"].variations.pop(target_name, None)
+
+    return changed
+
+
 def remove_hvar(font: TTFont) -> bool:
     """Remove HVAR table so gvar phantom points handle width interpolation."""
     if "HVAR" in font:
@@ -166,6 +377,11 @@ def build(config_path: str):
         changed = apply_modifications(font, modifications, allowed)
         for name, old_w, new_w in changed:
             print(f"  {name}: {old_w} -> {new_w}")
+
+        # Rebuild precomposed fractions as composite glyphs
+        rebuilt = rebuild_fractions(font, cfg)
+        for name in rebuilt:
+            print(f"  rebuilt fraction: {name}")
 
         # Remove HVAR to avoid stale variation deltas
         if remove_hvar(font):

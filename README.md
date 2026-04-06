@@ -1,13 +1,20 @@
 # Prepbook Quattro
 
-Modified version of iA Writer Quattro with custom glyph spacing for [Prepbook](https://prepbook.app/).
+Modified version of iA Writer Quattro with custom glyph spacing and rebuilt fraction glyphs for [Prepbook](https://prepbook.app/).
 
 Derived from [iA Writer Quattro](https://github.com/iaolo/iA-Fonts) under the SIL Open Font License 1.1. Renamed per OFL requirements (Reserved Font Name "iA Writer" replaced).
+
+## What it does
+- Tightens punctuation spacing (period, comma, quotes, parens, brackets, braces, `!`, `|`, space) using the font's existing width classes.
+- Rebuilds the precomposed fraction glyphs (½, ¼, ¾, ⅓, ⅔, ⅕, …) as wider composites of `<digit>.numr` + `fraction` + `<digit>.dnom` with a single continuous slash.
+- Reshapes the `fraction` glyph (U+2044) itself from two disjoint parallelograms into one continuous slash, while preserving the weight-axis gvar deltas so bold still works.
+- Renames the family to "Prepbook Quattro" in all name table records.
 
 ## Setup
 
 ```
-pip install fonttools
+python3 -m venv .venv
+.venv/bin/pip install fonttools
 ```
 
 ## Usage
@@ -18,8 +25,8 @@ Copy the iA Writer Quattro **variable** `.ttf` files into `input/`:
 
 ```
 input/
-  iAWriterQuattroS-Regular.ttf   (Variable Roman)
-  iAWriterQuattroS-Italic.ttf    (Variable Italic)
+  iAWriterQuattroV.ttf          (Variable Roman)
+  iAWriterQuattroV-Italic.ttf   (Variable Italic)
 ```
 
 Download from: https://github.com/iaolo/iA-Fonts/tree/master/iA%20Writer%20Quattro/Variable
@@ -27,54 +34,52 @@ Download from: https://github.com/iaolo/iA-Fonts/tree/master/iA%20Writer%20Quatt
 ### 2. Inspect current widths
 
 ```
-python scripts/inspect.py
+.venv/bin/python -P scripts/inspect_font.py
 ```
 
-This shows all width classes in use and every punctuation glyph's current advance width. Use this to decide what to change.
+This dumps the width classes, punctuation metrics, and fraction glyph structure for every `.ttf` in `input/`. Use it before and after building.
 
-### 3. Edit config.json
+> **Why `-P`?** The flag disables prepending the script's directory to `sys.path`, which otherwise shadows stdlib modules in some Python 3.14 setups.
 
-```json
-{
-  "family_name": "Prepbook Quattro",
-  "allowed_widths": [600, 680, 780, 900],
-  "modifications": {
-    "period": 600,
-    "comma": 600
-  }
-}
-```
+### 3. Edit `config.json`
 
-- **`allowed_widths`**: The fixed set of width classes Quattro uses. Run `inspect.py` to discover the actual values — only these widths are permitted.
-- **`modifications`**: Map of glyph name → new advance width. Values must be in `allowed_widths`.
+Key sections:
+- `allowed_widths` — the safety rail. Every value assigned in `modifications` must be one of these four canonical width classes.
+- `modifications` — glyph name → new advance width.
+- `fraction_rebuild` — configures the composite fraction pass. `layout.gap` widens or tightens the fractions; set `reshape_fraction_slash: true` to also rewrite the `fraction` glyph itself into one continuous slash.
 
 ### 4. Build
 
 ```
-python scripts/build.py
+.venv/bin/python -P scripts/build.py
 ```
 
 Modified fonts appear in `output/`.
+
+### 5. Verify
+
+```
+.venv/bin/python -P scripts/inspect_font.py output/PrepbookQuattroV.ttf output/PrepbookQuattroV-Italic.ttf
+```
 
 ## File structure
 
 ```
 prepbook-quattro/
-├── config.json          # Width modifications & family name
-├── input/               # Source iA Writer Quattro variable TTFs (git-ignored)
-├── output/              # Built Prepbook Quattro fonts
+├── config.json           # Width modifications, fraction rebuild config, family name
+├── input/                # Source iA Writer Quattro variable TTFs (git-ignored)
+├── output/               # Built Prepbook Quattro fonts (git-ignored)
 ├── scripts/
-│   ├── inspect.py       # Dump width classes & glyph metrics
-│   └── build.py         # Apply modifications & rename
+│   ├── inspect_font.py   # Dump width classes, glyph metrics, fraction structure
+│   └── build.py          # Apply modifications, rebuild fractions, rename
+├── CLAUDE.md             # Architecture notes for AI-assisted edits
 └── README.md
 ```
 
 ## Notes
-
-- The build removes the `HVAR` table from variable fonts. The `gvar` phantom points still handle weight interpolation correctly for advance width changes.
-- Glyph outlines are never modified — only horizontal metrics (`hmtx`) and metadata.
-- After the first build, run `inspect.py` on the output fonts to verify changes.
+- Glyph outlines are never drawn. The build only edits `hmtx`, writes composite glyph records, and repositions the 8 existing points of the `fraction` glyph (preserving gvar deltas for weight variation).
+- After a build, run `inspect_font.py` on the outputs to verify advance widths and confirm each precomposed fraction is now a composite referencing `<digit>.numr`, `fraction`, and `<digit>.dnom`.
+- The build prints a warning about outlier source widths (550, 598, 750, etc.) on precomposed accent glyphs — these are iA's own artifacts, harmless, and not part of the canonical 4-width architecture.
 
 ## License
-
 SIL Open Font License 1.1 — see LICENSE.md in the source repository.

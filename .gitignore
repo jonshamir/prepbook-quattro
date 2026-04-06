@@ -2,3 +2,5 @@ input/*.ttf
 output/*.ttf
 __pycache__/
 *.pyc
+.venv/
+.DS_Store

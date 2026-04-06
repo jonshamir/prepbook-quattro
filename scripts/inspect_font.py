@@ -47,6 +47,36 @@ def inspect(path: str):
         if len(glyphs) > 50:
             print(f"    ... and {len(glyphs) - 50} more")
 
+    # Fractions: show composite structure if rebuilt
+    FRACTION_CODEPOINTS = [
+        (0x00BC, "1/4"), (0x00BD, "1/2"), (0x00BE, "3/4"),
+        (0x2150, "1/7"), (0x2151, "1/9"), (0x2152, "1/10"),
+        (0x2153, "1/3"), (0x2154, "2/3"),
+        (0x2155, "1/5"), (0x2156, "2/5"), (0x2157, "3/5"), (0x2158, "4/5"),
+        (0x2159, "1/6"), (0x215A, "5/6"),
+        (0x215B, "1/8"), (0x215C, "3/8"), (0x215D, "5/8"), (0x215E, "7/8"),
+    ]
+    glyf = font.get("glyf")
+    cmap = font.getBestCmap()
+    print(f"\n  FRACTIONS:")
+    for cp, label in FRACTION_CODEPOINTS:
+        if cp not in cmap:
+            continue
+        gname = cmap[cp]
+        w, lsb = hmtx.metrics[gname]
+        kind = "?"
+        detail = ""
+        if glyf and gname in glyf:
+            g = glyf[gname]
+            if g.numberOfContours == -1:
+                kind = "composite"
+                comps = ", ".join(c.glyphName for c in g.components)
+                detail = f"  [{comps}]"
+            else:
+                kind = "simple"
+                detail = f"  contours={g.numberOfContours}"
+        print(f"    U+{cp:04X} {label:5s} {gname:20s}  width={w:4d}  lsb={lsb:5d}  {kind}{detail}")
+
     print(f"\n  PUNCTUATION & SYMBOLS:")
     for name in PUNCT_GLYPHS:
         if name in hmtx.metrics:
