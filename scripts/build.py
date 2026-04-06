@@ -340,6 +340,57 @@ def apply_cmap_aliases(font: TTFont, aliases: dict) -> list[tuple[int, str]]:
     return added
 
 
+def apply_outline_swaps(font: TTFont, swaps: dict) -> list[tuple[str, str]]:
+    """Replace each target glyph's outline with a 1-component composite
+    that references the source glyph. Preserves advance width, updates
+    LSB from the new bounds, and pops the target's gvar entry so weight
+    variation inherits from the referenced component's own deltas.
+    """
+    if not swaps:
+        return []
+    glyf = font["glyf"]
+    hmtx = font["hmtx"]
+
+    # Force eager gvar decompile before modifying any glyph shape
+    # (same reason as rebuild_fractions — lazy per-key decompile would
+    # later fail against the already-modified shape).
+    gvar = font.get("gvar")
+    if gvar is not None:
+        for _k in list(gvar.variations.keys()):
+            _ = gvar.variations[_k]
+
+    swapped = []
+    for target, source in swaps.items():
+        if target.startswith("_"):
+            continue
+        if target not in glyf:
+            print(f"  WARNING: outline swap target '{target}' not in font, skipping")
+            continue
+        if source not in glyf:
+            raise ValueError(f"outline swap source '{source}' not in font")
+
+        c = GlyphComponent()
+        c.glyphName = source
+        c.x, c.y = 0, 0
+        c.flags = ARGS_ARE_XY_VALUES | ROUND_XY_TO_GRID
+
+        new_g = Glyph()
+        new_g.numberOfContours = -1
+        new_g.components = [c]
+        glyf[target] = new_g
+        new_g.recalcBounds(glyf)
+
+        old_adv, _ = hmtx.metrics[target]
+        hmtx.metrics[target] = (
+            old_adv,
+            new_g.xMin if hasattr(new_g, "xMin") else 0,
+        )
+        if gvar is not None:
+            gvar.variations.pop(target, None)
+        swapped.append((target, source))
+    return swapped
+
+
 def remove_hvar(font: TTFont) -> bool:
     """Remove HVAR table so gvar phantom points handle width interpolation."""
     if "HVAR" in font:
@@ -413,6 +464,11 @@ def build(config_path: str):
         aliased = apply_cmap_aliases(font, cfg.get("cmap_aliases") or {})
         for cp, gname in aliased:
             print(f"  cmap alias: U+{cp:04X} -> {gname}")
+
+        # Swap glyph outlines to alternates (e.g. dotted zero -> empty zero)
+        swapped = apply_outline_swaps(font, cfg.get("glyph_outline_swaps") or {})
+        for target, source in swapped:
+            print(f"  outline swap: {target} <- {source}")
 
         # Rebuild precomposed fractions as composite glyphs
         rebuilt = rebuild_fractions(font, cfg)

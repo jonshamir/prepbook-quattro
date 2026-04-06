@@ -28,6 +28,10 @@
 
     "space": 300
   },
+  "glyph_outline_swaps": {
+    "_comment": "Replace a glyph's outline with a composite that references another glyph. Used to swap the default dotted `zero` with `zero.alt02` (empty, O-shaped — the font's OT `salt` alternate). Advance width is preserved; LSB is recomputed from the composite's bounds; gvar entry is dropped so weight variation inherits from the referenced component.",
+    "zero": "zero.alt02"
+  },
   "cmap_aliases": {
     "_comment": "Map extra Unicode codepoints to existing glyphs. U+2009 THIN SPACE isn't in the source font; alias it to `space` (width 300) so it renders as a real glyph instead of an OS fallback. Honors allowed_widths since no new width is introduced.",
     "2009": "space"
@@ -39,7 +43,7 @@
     "reshape_fraction_slash": true,
     "layout": {
       "auto": true,
-      "gap": 200
+      "gap": 300
     },
     "targets": {
       "onehalf":       { "num": "one",   "den": "two"   },
