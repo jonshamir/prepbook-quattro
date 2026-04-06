@@ -2,6 +2,11 @@
   "family_name": "Prepbook Quattro",
   "comment": "Advance widths MUST be one of the values in allowed_widths. iA Writer Quattro uses four canonical width classes (300/450/600/900) plus a few outlier widths on precomposed accent glyphs. Run 'scripts/inspect_font.py' on the source fonts to verify.",
   "allowed_widths": [300, 450, 600, 900],
+  "weight_remap": {
+    "_comment": "Optional avar remap on the wght axis to make Regular render slightly heavier without redrawing outlines. `nudge` is the amount added to the axis default (400): clients requesting wght=400 will render as if at wght=400+nudge. Range ~15 (subtle) to ~40 (clearly heavier). Set enabled=false to disable.",
+    "enabled": true,
+    "nudge": 40
+  },
   "modifications": {
     "_comment": "Map glyph names to new advance widths. All values must be in allowed_widths above. Run scripts/inspect.py to see current widths and glyph names.",
     "period": 300,
@@ -29,13 +34,10 @@
     "space": 300
   },
   "remove_contours": {
-    "_comment": "Delete specific contours from simple glyphs in place. zero.numr and zero.dnom each have 3 contours (outer ring, inner counter, center dot); dropping contour index 2 removes the dot so the rebuilt `percent` composite shows two empty small zeros around the slash, matching the default empty `zero`. Does not affect any precomposed fraction because none of them use a zero digit.",
+    "_comment": "Delete specific contours from simple glyphs in place. `zero`, `zero.numr`, and `zero.dnom` all have 3 contours (outer ring, inner counter, center dot); dropping contour index 2 removes the dot so the default 0 renders empty and the rebuilt `percent` composite shows two empty small zeros around the slash. No precomposed fraction uses a zero digit, so this has no side effects on fractions.",
+    "zero": [2],
     "zero.numr": [2],
     "zero.dnom": [2]
-  },
-  "glyph_outline_swaps": {
-    "_comment": "Replace a glyph's outline with a composite that references another glyph. Used to swap the default dotted `zero` with `zero.alt02` (empty, O-shaped — the font's OT `salt` alternate). Advance width is preserved; LSB is recomputed from the composite's bounds; gvar entry is dropped so weight variation inherits from the referenced component.",
-    "zero": "zero.alt02"
   },
   "cmap_aliases": {
     "_comment": "Map extra Unicode codepoints to existing glyphs. (Currently unused — U+2009 is handled by create_empty_glyphs below.)"
@@ -71,7 +73,7 @@
       "uni215C":       { "num": "three", "den": "eight" },
       "uni215D":       { "num": "five",  "den": "eight" },
       "uni215E":       { "num": "seven", "den": "eight" },
-      "percent":       { "num": "zero",  "den": "zero"  }
+      "percent":       { "num": "zero",  "den": "zero",  "gap": 220 }
     }
   }
 }

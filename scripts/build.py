@@ -264,7 +264,7 @@ def rebuild_fractions(font: TTFont, cfg: dict) -> list[str]:
             fg = glyf["fraction"]; fg.recalcBounds(glyf)
             n_w = ng.xMax - ng.xMin
             d_w = dg.xMax - dg.xMin
-            gap = int(lay.get("gap", 0))
+            gap = int(spec.get("gap", lay.get("gap", 0)))
             total = n_w + gap + d_w
             left_pad = (adv - total) // 2
             num_x_off = left_pad - ng.xMin
@@ -483,63 +483,39 @@ def remove_contours_from_glyphs(font: TTFont, specs: dict) -> list[tuple[str, li
     return modified
 
 
-def apply_outline_swaps(font: TTFont, swaps: dict) -> list[tuple[str, str]]:
-    """Replace each target glyph's outline with a 1-component composite
-    that references the source glyph. Preserves advance width, updates
-    LSB from the new bounds, and pops the target's gvar entry so weight
-    variation inherits from the referenced component's own deltas.
-    """
-    if not swaps:
-        return []
-    glyf = font["glyf"]
-    hmtx = font["hmtx"]
-
-    # Force eager gvar decompile before modifying any glyph shape
-    # (same reason as rebuild_fractions — lazy per-key decompile would
-    # later fail against the already-modified shape).
-    gvar = font.get("gvar")
-    if gvar is not None:
-        for _k in list(gvar.variations.keys()):
-            _ = gvar.variations[_k]
-
-    swapped = []
-    for target, source in swaps.items():
-        if target.startswith("_"):
-            continue
-        if target not in glyf:
-            print(f"  WARNING: outline swap target '{target}' not in font, skipping")
-            continue
-        if source not in glyf:
-            raise ValueError(f"outline swap source '{source}' not in font")
-
-        c = GlyphComponent()
-        c.glyphName = source
-        c.x, c.y = 0, 0
-        c.flags = ARGS_ARE_XY_VALUES | ROUND_XY_TO_GRID
-
-        new_g = Glyph()
-        new_g.numberOfContours = -1
-        new_g.components = [c]
-        glyf[target] = new_g
-        new_g.recalcBounds(glyf)
-
-        old_adv, _ = hmtx.metrics[target]
-        hmtx.metrics[target] = (
-            old_adv,
-            new_g.xMin if hasattr(new_g, "xMin") else 0,
-        )
-        if gvar is not None:
-            gvar.variations.pop(target, None)
-        swapped.append((target, source))
-    return swapped
-
-
 def remove_hvar(font: TTFont) -> bool:
     """Remove HVAR table so gvar phantom points handle width interpolation."""
     if "HVAR" in font:
         del font["HVAR"]
         return True
     return False
+
+
+def apply_weight_remap(font: TTFont, nudge: float) -> TTFont:
+    """Clamp the wght axis minimum upward by `nudge` units using the
+    fontTools instancer, so that clients requesting the old minimum weight
+    render at a slightly heavier point. Returns the (possibly new) font.
+
+    Example: wght axis 400..700 with nudge=40 becomes 440..700, default=440.
+    CSS `font-weight: 400` will clamp to the font's new minimum (440) and
+    render heavier. No outlines are drawn — the instancer recomputes gvar
+    deltas so the remaining range still interpolates correctly.
+    """
+    if nudge == 0 or "fvar" not in font:
+        return font
+    fvar = font["fvar"]
+    wght_axis = next((a for a in fvar.axes if a.axisTag == "wght"), None)
+    if wght_axis is None:
+        return font
+    new_min = wght_axis.minValue + nudge
+    if new_min >= wght_axis.maxValue:
+        return font
+
+    from fontTools.varLib.instancer import instantiateVariableFont
+    return instantiateVariableFont(
+        font,
+        {"wght": (new_min, new_min, wght_axis.maxValue)},
+    )
 
 
 def update_metadata(font: TTFont):
@@ -613,12 +589,7 @@ def build(config_path: str):
         for cp, gname in aliased:
             print(f"  cmap alias: U+{cp:04X} -> {gname}")
 
-        # Swap glyph outlines to alternates (e.g. dotted zero -> empty zero)
-        swapped = apply_outline_swaps(font, cfg.get("glyph_outline_swaps") or {})
-        for target, source in swapped:
-            print(f"  outline swap: {target} <- {source}")
-
-        # Strip contours from glyphs (e.g. delete dot from zero.numr/dnom)
+        # Strip contours from glyphs (e.g. delete dot from zero/numr/dnom)
         stripped = remove_contours_from_glyphs(font, cfg.get("remove_contours") or {})
         for gname, dropped, old_n, new_n in stripped:
             print(f"  remove contours: {gname} dropped={dropped} ({old_n} -> {new_n} pts)")
@@ -631,6 +602,17 @@ def build(config_path: str):
         # Remove HVAR to avoid stale variation deltas
         if remove_hvar(font):
             print(f"  Removed HVAR table")
+
+        # Optional wght axis clamp (raises the minimum weight so Regular
+        # renders heavier). Uses the instancer — no outlines are drawn.
+        wr = cfg.get("weight_remap") or {}
+        if wr.get("enabled"):
+            nudge = float(wr.get("nudge", 25))
+            old_min = font["fvar"].axes[0].minValue if "fvar" in font else None
+            font = apply_weight_remap(font, nudge)
+            new_wght = next((a for a in font["fvar"].axes if a.axisTag == "wght"), None)
+            if new_wght is not None:
+                print(f"  Weight remap: wght min {old_min} -> {new_wght.minValue} (range now {new_wght.minValue}..{new_wght.maxValue})")
 
         # Update metadata
         update_metadata(font)
