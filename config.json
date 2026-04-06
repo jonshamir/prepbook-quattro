@@ -1,0 +1,12 @@
+{
+  "family_name": "Prepbook Quattro",
+  "comment": "Advance widths MUST be one of the values in allowed_widths. iA Writer Quattro uses exactly 4 width classes (plus 0 for .notdef/NULL/CR). Run 'python scripts/inspect.py' on the source fonts to verify these.",
+  "allowed_widths": [300, 450, 600, 900],
+  "modifications": {
+    "_comment": "Map glyph names to new advance widths. All values must be in allowed_widths above. Run scripts/inspect.py to see current widths and glyph names.",
+    "period": 300,
+    "comma": 300,
+    "colon": 300,
+    "semicolon": 300
+  }
+}
