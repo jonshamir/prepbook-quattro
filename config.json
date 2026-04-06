@@ -7,6 +7,23 @@
     "period": 300,
     "comma": 300,
     "colon": 300,
-    "semicolon": 300
+    "semicolon": 300,
+
+    "grave": 300,
+    "quotesingle": 300,
+    "quoteleft": 300,
+    "quoteright": 300,
+    "quotedbl": 300,
+    "quotedblleft": 300,
+    "quotedblright": 300,
+
+    "parenleft": 450,
+    "parenright": 450,
+    "bracketleft": 450,
+    "bracketright": 450,
+    "braceleft": 450,
+    "braceright": 450,
+    "exclam": 450,
+    "bar": 450
   }
 }
