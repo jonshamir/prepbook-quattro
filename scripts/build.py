@@ -340,6 +340,149 @@ def apply_cmap_aliases(font: TTFont, aliases: dict) -> list[tuple[int, str]]:
     return added
 
 
+def create_empty_glyphs(font: TTFont, specs: dict) -> list[tuple[str, int, int]]:
+    """Add new empty (no-ink) glyphs with a configurable advance width
+    and point the given Unicode codepoints at them. Used for glyphs
+    like U+2009 THIN SPACE where no existing glyph has the right shape
+    AND the desired advance width — this is the deliberate escape
+    hatch around `allowed_widths`.
+
+    Each `specs` value may be either a hex codepoint string (legacy,
+    width defaults to 0) or a dict with keys `cp` (hex codepoint)
+    and `width` (integer advance, defaults to 0).
+    """
+    if not specs:
+        return []
+    glyf = font["glyf"]
+    hmtx = font["hmtx"]
+
+    # Force gvar to fully decompile against the CURRENT glyph count
+    # before we append. Otherwise later access asserts because the
+    # cached glyphCount no longer matches the glyph order length.
+    gvar = font.get("gvar")
+    if gvar is not None:
+        for _k in list(gvar.variations.keys()):
+            _ = gvar.variations[_k]
+
+    glyph_order = font.getGlyphOrder()
+    existing = set(glyph_order)
+    cmap_table = font["cmap"]
+    added = []
+    new_order = list(glyph_order)
+    for glyph_name, spec in specs.items():
+        if glyph_name.startswith("_"):
+            continue
+        if glyph_name in existing:
+            raise ValueError(
+                f"create_empty_glyphs: glyph '{glyph_name}' already exists"
+            )
+
+        if isinstance(spec, dict):
+            cp_hex = spec.get("cp")
+            width = int(spec.get("width", 0))
+        else:
+            cp_hex = spec
+            width = 0
+        try:
+            cp = int(cp_hex, 16)
+        except (TypeError, ValueError):
+            raise ValueError(
+                f"create_empty_glyphs: codepoint '{cp_hex}' is not hex"
+            )
+
+        g = Glyph()
+        g.numberOfContours = 0
+        g.endPtsOfContours = []
+        g.coordinates = GlyphCoordinates([])
+        g.flags = array("B", [])
+        g.program = Program()
+        g.program.fromBytecode(b"")
+
+        new_order.append(glyph_name)
+        glyf[glyph_name] = g
+        hmtx.metrics[glyph_name] = (width, 0)
+
+        for sub in cmap_table.tables:
+            if sub.isUnicode():
+                sub.cmap[cp] = glyph_name
+
+        added.append((glyph_name, cp, width))
+
+    font.setGlyphOrder(new_order)
+    return added
+
+
+def remove_contours_from_glyphs(font: TTFont, specs: dict) -> list[tuple[str, list, int, int]]:
+    """Delete specified contours (by index) from simple glyphs in place.
+    Keeps remaining contours in order, renumbers endPtsOfContours, and
+    subsets each gvar tuple's delta coordinates the same way so weight
+    variation still applies to the remaining points (plus the trailing
+    4 phantom points).
+    """
+    if not specs:
+        return []
+    glyf = font["glyf"]
+    hmtx = font["hmtx"]
+
+    gvar = font.get("gvar")
+    if gvar is not None:
+        for _k in list(gvar.variations.keys()):
+            _ = gvar.variations[_k]
+
+    modified = []
+    for glyph_name, drop_list in specs.items():
+        if glyph_name.startswith("_"):
+            continue
+        if glyph_name not in glyf:
+            print(f"  WARNING: remove_contours target '{glyph_name}' not in font, skipping")
+            continue
+        g = glyf[glyph_name]
+        if g.numberOfContours <= 0:
+            print(f"  WARNING: '{glyph_name}' is not a simple glyph, skipping")
+            continue
+
+        drop_set = set(drop_list)
+        old_ends = list(g.endPtsOfContours)
+        old_coords = g.coordinates
+        old_flags = g.flags
+        n_old_real = len(old_coords)
+
+        # Build list of kept point indices and new endPtsOfContours
+        keep_indices = []
+        new_ends = []
+        start = 0
+        for i, end in enumerate(old_ends):
+            if i not in drop_set:
+                for j in range(start, end + 1):
+                    keep_indices.append(j)
+                new_ends.append(len(keep_indices) - 1)
+            start = end + 1
+
+        # Rewrite the glyph
+        g.endPtsOfContours = new_ends
+        g.coordinates = GlyphCoordinates([old_coords[i] for i in keep_indices])
+        g.flags = array("B", [old_flags[i] for i in keep_indices])
+        g.numberOfContours = len(new_ends)
+        g.recalcBounds(glyf)
+
+        old_adv, _ = hmtx.metrics[glyph_name]
+        hmtx.metrics[glyph_name] = (
+            old_adv,
+            g.xMin if hasattr(g, "xMin") else 0,
+        )
+
+        # Subset gvar deltas: keep the indexed real points + 4 phantom points
+        if gvar is not None:
+            phantom = [n_old_real, n_old_real + 1, n_old_real + 2, n_old_real + 3]
+            all_keep = keep_indices + phantom
+            for tv in gvar.variations.get(glyph_name, []):
+                dl = tv.coordinates
+                tv.coordinates = [dl[i] for i in all_keep]
+
+        modified.append((glyph_name, list(drop_list), n_old_real, len(keep_indices)))
+    return modified
+
+
 def apply_outline_swaps(font: TTFont, swaps: dict) -> list[tuple[str, str]]:
     """Replace each target glyph's outline with a 1-component composite
     that references the source glyph. Preserves advance width, updates
@@ -460,6 +603,11 @@ def build(config_path: str):
         for name, old_w, new_w in changed:
             print(f"  {name}: {old_w} -> {new_w}")
 
+        # Create brand-new empty (0-width) glyphs for configured codepoints
+        created = create_empty_glyphs(font, cfg.get("create_empty_glyphs") or {})
+        for gname, cp, w in created:
+            print(f"  empty glyph: U+{cp:04X} -> {gname} (width={w})")
+
         # Add cmap aliases for codepoints missing from the source font
         aliased = apply_cmap_aliases(font, cfg.get("cmap_aliases") or {})
         for cp, gname in aliased:
@@ -469,6 +617,11 @@ def build(config_path: str):
         swapped = apply_outline_swaps(font, cfg.get("glyph_outline_swaps") or {})
         for target, source in swapped:
             print(f"  outline swap: {target} <- {source}")
+
+        # Strip contours from glyphs (e.g. delete dot from zero.numr/dnom)
+        stripped = remove_contours_from_glyphs(font, cfg.get("remove_contours") or {})
+        for gname, dropped, old_n, new_n in stripped:
+            print(f"  remove contours: {gname} dropped={dropped} ({old_n} -> {new_n} pts)")
 
         # Rebuild precomposed fractions as composite glyphs
         rebuilt = rebuild_fractions(font, cfg)

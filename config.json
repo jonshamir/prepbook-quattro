@@ -28,13 +28,21 @@
 
     "space": 300
   },
+  "remove_contours": {
+    "_comment": "Delete specific contours from simple glyphs in place. zero.numr and zero.dnom each have 3 contours (outer ring, inner counter, center dot); dropping contour index 2 removes the dot so the rebuilt `percent` composite shows two empty small zeros around the slash, matching the default empty `zero`. Does not affect any precomposed fraction because none of them use a zero digit.",
+    "zero.numr": [2],
+    "zero.dnom": [2]
+  },
   "glyph_outline_swaps": {
     "_comment": "Replace a glyph's outline with a composite that references another glyph. Used to swap the default dotted `zero` with `zero.alt02` (empty, O-shaped — the font's OT `salt` alternate). Advance width is preserved; LSB is recomputed from the composite's bounds; gvar entry is dropped so weight variation inherits from the referenced component.",
     "zero": "zero.alt02"
   },
   "cmap_aliases": {
-    "_comment": "Map extra Unicode codepoints to existing glyphs. U+2009 THIN SPACE isn't in the source font; alias it to `space` (width 300) so it renders as a real glyph instead of an OS fallback. Honors allowed_widths since no new width is introduced.",
-    "2009": "space"
+    "_comment": "Map extra Unicode codepoints to existing glyphs. (Currently unused — U+2009 is handled by create_empty_glyphs below.)"
+  },
+  "create_empty_glyphs": {
+    "_comment": "Create brand-new empty (no-ink) glyphs with a given advance width and alias Unicode codepoints to them. Used for U+2009 THIN SPACE which is intentionally an exception to allowed_widths — set to 150 (half the minimum class width of 300) so it renders as a narrow, barely-there gap. Key = new glyph name, value = { cp: hex, width: int }.",
+    "uni2009": { "cp": "2009", "width": 150 }
   },
   "fraction_rebuild": {
     "_comment": "Replace precomposed fraction glyphs with composites of <num>.numr + fraction + <den>.dnom at advance_width. reshape_fraction_slash rewrites the `fraction` glyph itself as a single continuous slash (preserving its 8-point/2-contour gvar structure so the weight axis still works). layout.auto=true computes per-target x-offsets from actual component ink bounds so each composite is centered; layout.gap adds horizontal space between numerator ink end and denominator ink start (larger = wider fractions).",
@@ -62,7 +70,8 @@
       "uni215B":       { "num": "one",   "den": "eight" },
       "uni215C":       { "num": "three", "den": "eight" },
       "uni215D":       { "num": "five",  "den": "eight" },
-      "uni215E":       { "num": "seven", "den": "eight" }
+      "uni215E":       { "num": "seven", "den": "eight" },
+      "percent":       { "num": "zero",  "den": "zero"  }
     }
   }
 }
