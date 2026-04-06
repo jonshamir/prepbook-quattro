@@ -1,6 +1,6 @@
 # Prepbook Quattro
 
-Modified version of iA Writer Quattro with custom glyph spacing for Prepbook.
+Modified version of iA Writer Quattro with custom glyph spacing for [Prepbook](https://prepbook.app/).
 
 Derived from [iA Writer Quattro](https://github.com/iaolo/iA-Fonts) under the SIL Open Font License 1.1. Renamed per OFL requirements (Reserved Font Name "iA Writer" replaced).
 

@@ -24,6 +24,8 @@
     "braceleft": 450,
     "braceright": 450,
     "exclam": 450,
-    "bar": 450
+    "bar": 450,
+
+    "space": 300
   }
 }
