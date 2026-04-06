@@ -28,6 +28,10 @@
 
     "space": 300
   },
+  "cmap_aliases": {
+    "_comment": "Map extra Unicode codepoints to existing glyphs. U+2009 THIN SPACE isn't in the source font; alias it to `space` (width 300) so it renders as a real glyph instead of an OS fallback. Honors allowed_widths since no new width is introduced.",
+    "2009": "space"
+  },
   "fraction_rebuild": {
     "_comment": "Replace precomposed fraction glyphs with composites of <num>.numr + fraction + <den>.dnom at advance_width. reshape_fraction_slash rewrites the `fraction` glyph itself as a single continuous slash (preserving its 8-point/2-contour gvar structure so the weight axis still works). layout.auto=true computes per-target x-offsets from actual component ink bounds so each composite is centered; layout.gap adds horizontal space between numerator ink end and denominator ink start (larger = wider fractions).",
     "enabled": true,

@@ -309,6 +309,37 @@ def rebuild_fractions(font: TTFont, cfg: dict) -> list[str]:
     return changed
 
 
+def apply_cmap_aliases(font: TTFont, aliases: dict) -> list[tuple[int, str]]:
+    """Point extra Unicode codepoints at existing glyphs via cmap edits.
+
+    `aliases` maps hex codepoint strings (e.g. "2009") to glyph names that
+    already exist in the font. No glyphs, outlines, or hmtx entries are
+    created — only cmap subtables are modified. Every Unicode cmap subtable
+    gets the alias added.
+    """
+    added = []
+    if not aliases:
+        return added
+    glyph_order = set(font.getGlyphOrder())
+    cmap_table = font["cmap"]
+    for key, glyph_name in aliases.items():
+        if key.startswith("_"):
+            continue
+        if glyph_name not in glyph_order:
+            raise ValueError(
+                f"cmap_aliases: target glyph '{glyph_name}' not in font"
+            )
+        try:
+            cp = int(key, 16)
+        except ValueError:
+            raise ValueError(f"cmap_aliases: codepoint '{key}' is not hex")
+        for sub in cmap_table.tables:
+            if sub.isUnicode():
+                sub.cmap[cp] = glyph_name
+        added.append((cp, glyph_name))
+    return added
+
+
 def remove_hvar(font: TTFont) -> bool:
     """Remove HVAR table so gvar phantom points handle width interpolation."""
     if "HVAR" in font:
@@ -378,6 +409,11 @@ def build(config_path: str):
         for name, old_w, new_w in changed:
             print(f"  {name}: {old_w} -> {new_w}")
 
+        # Add cmap aliases for codepoints missing from the source font
+        aliased = apply_cmap_aliases(font, cfg.get("cmap_aliases") or {})
+        for cp, gname in aliased:
+            print(f"  cmap alias: U+{cp:04X} -> {gname}")
+
         # Rebuild precomposed fractions as composite glyphs
         rebuilt = rebuild_fractions(font, cfg)
         for name in rebuilt:
@@ -414,6 +450,17 @@ def build(config_path: str):
             if glyph_name in hmtx.metrics:
                 w, lsb = hmtx.metrics[glyph_name]
                 print(f"  {glyph_name:24s}  width={w:4d}  lsb={lsb:4d}")
+        # Verify cmap aliases
+        aliases = cfg.get("cmap_aliases") or {}
+        if aliases:
+            best = font.getBestCmap()
+            for key, gname in aliases.items():
+                if key.startswith("_"):
+                    continue
+                cp = int(key, 16)
+                mapped = best.get(cp)
+                w, _ = hmtx.metrics.get(mapped, (None, None)) if mapped else (None, None)
+                print(f"  U+{cp:04X} -> {mapped}  (width={w})")
         # Print family name from name table
         name_table = font["name"]
         for record in name_table.names:
