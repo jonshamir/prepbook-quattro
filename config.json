@@ -47,9 +47,10 @@
     "uni2009": { "cp": "2009", "width": 150 }
   },
   "fraction_rebuild": {
-    "_comment": "Replace precomposed fraction glyphs with composites of <num>.numr + fraction + <den>.dnom at advance_width. reshape_fraction_slash rewrites the `fraction` glyph itself as a single continuous slash (preserving its 8-point/2-contour gvar structure so the weight axis still works). layout.auto=true computes per-target x-offsets from actual component ink bounds so each composite is centered; layout.gap adds horizontal space between numerator ink end and denominator ink start (larger = wider fractions).",
+    "_comment": "Replace precomposed fraction glyphs with composites of <num>.numr + fraction + <den>.dnom at advance_width. reshape_fraction_slash rewrites the `fraction` glyph itself as a single continuous slash (preserving its 8-point/2-contour gvar structure so the weight axis still works). layout.auto=true computes per-target x-offsets from actual component ink bounds so each composite is centered; layout.gap adds horizontal space between numerator ink end and denominator ink start (larger = wider fractions). digit_scale applies a uniform 2x2 transform to the .numr/.dnom components only (slash stays at 1.0 so its gvar deltas remain valid) — used to enlarge the small digits for readability without redrawing any outlines.",
     "enabled": true,
     "advance_width": 900,
+    "digit_scale": 1.15,
     "reshape_fraction_slash": true,
     "layout": {
       "auto": true,

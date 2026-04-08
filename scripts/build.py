@@ -120,6 +120,7 @@ def rebuild_fractions(font: TTFont, cfg: dict) -> list[str]:
     adv = fr["advance_width"]
     lay = fr.get("layout") or {}
     auto_layout = bool(lay.get("auto", True))
+    digit_scale = float(fr.get("digit_scale", 1.0))
     changed = []
 
     # Force gvar to fully decompile BEFORE we touch any glyph shape.
@@ -262,13 +263,19 @@ def rebuild_fractions(font: TTFont, cfg: dict) -> list[str]:
             ng = glyf[num_glyph]; ng.recalcBounds(glyf)
             dg = glyf[den_glyph]; dg.recalcBounds(glyf)
             fg = glyf["fraction"]; fg.recalcBounds(glyf)
-            n_w = ng.xMax - ng.xMin
-            d_w = dg.xMax - dg.xMin
+            n_w = (ng.xMax - ng.xMin) * digit_scale
+            d_w = (dg.xMax - dg.xMin) * digit_scale
             gap = int(spec.get("gap", lay.get("gap", 0)))
             total = n_w + gap + d_w
             left_pad = (adv - total) // 2
-            num_x_off = left_pad - ng.xMin
-            den_x_off = (adv - left_pad - d_w) - dg.xMin
+            num_x_off = left_pad - ng.xMin * digit_scale
+            den_x_off = (adv - left_pad - d_w) - dg.xMin * digit_scale
+            # Anchor scaled numerator at its original top (yMax) so it
+            # grows downward instead of up; denominator keeps its
+            # baseline-ish anchor (origin), so it grows upward toward
+            # the slash, leaving the outer top/bottom of the fraction
+            # cell unchanged.
+            num_y_off = -(digit_scale - 1.0) * ng.yMax
             # Center fraction slash at the boundary where numerator ink
             # ends and denominator ink begins.
             boundary = left_pad + n_w + gap // 2
@@ -279,15 +286,17 @@ def rebuild_fractions(font: TTFont, cfg: dict) -> list[str]:
             den_x_off = int(lay.get("denominator_x", 300))
 
         components = []
-        for gname, x_off in (
-            (num_glyph, num_x_off),
-            ("fraction", frac_x_off),
-            (den_glyph, den_x_off),
+        for gname, x_off, y_off, scaled in (
+            (num_glyph, num_x_off, num_y_off if auto_layout else 0, True),
+            ("fraction", frac_x_off, 0, False),
+            (den_glyph, den_x_off, 0, True),
         ):
             c = GlyphComponent()
             c.glyphName = gname
-            c.x, c.y = int(x_off), 0
+            c.x, c.y = int(round(x_off)), int(round(y_off))
             c.flags = ARGS_ARE_XY_VALUES | ROUND_XY_TO_GRID
+            if scaled and digit_scale != 1.0:
+                c.transform = ((digit_scale, 0.0), (0.0, digit_scale))
             components.append(c)
 
         new_glyph = Glyph()
